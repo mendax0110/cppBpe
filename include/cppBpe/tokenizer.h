@@ -1,13 +1,9 @@
 #pragma once
 
-#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <unordered_map>
-#include <unordered_set>
-#include <memory>
-#include <functional>
 #include <optional>
 #include <ranges>
 #include <tbb/enumerable_thread_specific.h>
@@ -31,21 +27,6 @@ namespace cppBpe
         }
     };
 }
-
-/*template<>
-struct std::hash<cppBpe::Pair>
-{
-    size_t operator()(const cppBpe::Pair& p) const noexcept
-    {
-        uint64_t v = (static_cast<uint64_t>(p.first) << 32) | p.second;
-        v ^= v >> 33;
-        v *= UINT64_C(0xff51afd7ed558ccd);
-        v ^= v >> 33;
-        v *= UINT64_C(0xc4ceb9fe1a85ec53);
-        v ^= v >> 33;
-        return v;
-    }
-};*/
 
 namespace cppBpe
 {
@@ -110,25 +91,20 @@ namespace cppBpe
 
         template<typename InputIt>
         void train_from_iterator(InputIt begin, InputIt end, uint32_t vocab_size, size_t buffer_size = 8192, const std::optional<std::string>& pattern = std::nullopt);
-
         void train(const std::vector<std::string>& texts, uint32_t vocab_size, const std::optional<std::string> &pattern = std::nullopt);
-
 
         std::vector<TokenId> encode(std::string_view text) const;
         std::vector<std::vector<TokenId>> batch_encode(const std::vector<std::string>& texts) const;
         std::vector<TokenId> encode_chunk(const std::string_view chunk) const;
         std::string decode(const std::vector<TokenId>& ids) const;
 
-        //std::unordered_map<Pair, TokenId> merges_;
         std::unordered_map<Pair, TokenId, PairHash> merges_;
-
         uint32_t vocab_size() const noexcept
         {
             return 256U + static_cast<uint32_t>(merges_.size());
         }
 
         const std::string& get_patterns() const noexcept { return pattern_.pattern_str(); }
-
         std::vector<std::pair<std::vector<uint8_t>, uint32_t>> get_mergeable_ranks() const;
 
     private:
@@ -137,9 +113,7 @@ namespace cppBpe
         mutable bool vocab_dirty_ = true;
 
         const std::vector<std::vector<uint8_t>>& cached_vocab() const;
-
         void train_core_incremental(std::vector<Word> words, const std::vector<int32_t> &counts, uint32_t vocab_size);
-
         std::vector<std::vector<uint8_t>> build_vocab() const;
     };
 

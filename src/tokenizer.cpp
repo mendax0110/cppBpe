@@ -1,22 +1,17 @@
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
-#include <tbb/parallel_for.h>
 #include <tbb/parallel_reduce.h>
-#include <tbb/blocked_range.h>
-#include <tbb/enumerable_thread_specific.h>
 #include "cppBpe/tokenizer.h"
 #include <algorithm>
 #include <cassert>
-#include <cstring>
 #include <queue>
 #include <stdexcept>
-#include <tuple>
 #include <utility>
 #include <numeric>
 
 using namespace cppBpe;
 
-std::vector<std::pair<Pair, int32_t> > Word::merge_pair(const Pair pair, const TokenId new_id)
+std::vector<std::pair<Pair, int32_t>> Word::merge_pair(const Pair pair, const TokenId new_id)
 {
     const TokenId a = pair.first;
     const TokenId b = pair.second;
@@ -178,7 +173,6 @@ std::vector<std::string_view> CompilePattern::find_all(const std::string_view te
 
     while (offset <= length)
     {
-        //const int rc = pcre2_match_8(code_, subject, length, offset, 0, md, nullptr);
         const int rc = pcre2_jit_match_8(code_, subject, length, offset, 0, md, nullptr);
 
         if (rc == PCRE2_ERROR_NOMATCH)
@@ -442,7 +436,6 @@ std::vector<std::vector<uint8_t> > Tokenizer::build_vocab() const
 
 std::vector<std::pair<std::vector<uint8_t>, uint32_t> > Tokenizer::get_mergeable_ranks() const
 {
-    //const auto vocab = build_vocab();
     const auto& vocab = cached_vocab();
 
     std::vector<std::pair<std::vector<uint8_t>, uint32_t>> ranks;
@@ -642,7 +635,6 @@ std::vector<std::vector<TokenId> > Tokenizer::batch_encode(const std::vector<std
 
 std::string Tokenizer::decode(const std::vector<TokenId>& ids) const
 {
-    //const auto vocab = build_vocab();
     const auto& vocab = cached_vocab();
 
     std::string out;
