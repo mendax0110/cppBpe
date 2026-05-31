@@ -132,7 +132,7 @@ namespace
     {
         const Tokenizer tok;
         CHECK(tok.merges_.empty());
-        CHECK(!tok.get_patterns().empty());
+        CHECK(tok.get_patterns().empty());
     }
 
     void test_encode_with_pattern_no_merges()
@@ -403,7 +403,7 @@ namespace
     {
         // The GPT-4 pattern must match Unicode letters correctly.
         // "café" should split into chunks that include 'é' (U+00E9, 2 bytes UTF-8).
-        const Tokenizer tok;
+        const Tokenizer tok{std::string(GPT4_PATTERN)};
         const auto ids = tok.encode("café");
         // Roundtrip must work
         const auto decoded = tok.decode(ids);
