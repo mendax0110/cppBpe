@@ -1,0 +1,13 @@
+# Ignore build folders
+build/
+cmake-build-*/
+
+# Ignore python relsate files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE related files and folders
+.vscode/
+.idea/
