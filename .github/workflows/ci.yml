@@ -8,49 +8,24 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: Setup and execute Linux
+        if: runner.os == 'Linux'
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            build-essential \
-            cmake \
-            pkg-config \
-            libpcre2-dev \
-            libtbb-dev \
-            python3-dev \
-            python3-pip
+          chmod +x scripts/setup_linux.sh
+          ./scripts/setup_linux.sh
 
-      - name: Install Python dependencies
+      - name: Setup and execute macOS
+        if: runner.os == 'macOS'
         run: |
-          python3 -m pip install --upgrade pip
-          pip install "pybind11[global]" pytest tiktoken regex rustbpe
-
-      - name: Configure CMake
-        run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCPPBPE_BUILD_TESTS=ON
-
-      - name: Build
-        run: cmake --build build -j$(nproc)
-
-      - name: Run C++ tests
-        run: build/cppBpe_tests
-
-      - name: Run Python tests
-        run: PYTHONPATH=build pytest tests/python/test_tokenizer.py -v
-
-      - name: Run benchmark
-        run: |
-          cd build
-          PYTHONPATH=. python3 ../tests/python/benchmark.py \
-            --vocab 8192 \
-            --n 100 \
-            --probe 100000 \
-            --corpus ../input.txt
+          chmod +x scripts/setup_macos.sh
+          ./scripts/setup_macos.sh

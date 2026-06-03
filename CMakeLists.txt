@@ -12,12 +12,36 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug, RElease, RelWithDebInfo, MinSizeRel)
 endif()
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(PCRE2 REQUIRED libpcre2-8)
+option(CPPBPE_USE_BUNDLED_PCRE2 "Build PCRE2 from source with JIT enabled" ON)
+
+if(CPPBPE_USE_BUNDLED_PCRE2)
+    include(FetchContent)
+    set(PCRE2_BUILD_PCRE2_8 ON CACHE BOOL "" FORCE)
+    set(PCRE2_BUILD_PCRE2_16 OFF CACHE BOOL "" FORCE)
+    set(PCRE2_BUILD_PCRE2_32 OFF CACHE BOOL "" FORCE)
+    set(PCRE2_SUPPORT_JIT ON CACHE BOOL "" FORCE)
+    set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
+    set(PCRE2_BUILD_PCRE2POSIX OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        pcre2
+        URL https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.47/pcre2-10.47.tar.gz
+    )
+    FetchContent_MakeAvailable(pcre2)
+
+    set(PCRE2_LIBRARIES pcre2-8)
+    set(PCRE2_INCLUDE_DIRS "")
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(PCRE2 REQUIRED libpcre2-8)
+endif()
 
 find_package(TBB REQUIRED)
-find_package(pybind11 REQUIRED)
+cmake_policy(SET CMP0148 NEW)
+set(PYBIND11_FINDPYTHON ON)
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+find_package(pybind11 REQUIRED)
 
 add_library(cppBpe_core STATIC
         src/tokenizer.cpp

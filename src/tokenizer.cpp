@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cassert>
 #include <queue>
+#include <iostream>
 #include <stdexcept>
 #include <utility>
 #include <numeric>
@@ -116,6 +117,7 @@ void CompilePattern::compile()
     if (pattern_.empty())
     {
         code_ = nullptr;
+        jit_ready_ = false;
         return;
     }
 
@@ -130,9 +132,6 @@ void CompilePattern::compile()
         &erroffset,
         nullptr
     );
-
-    pcre2_jit_compile_8(code_, PCRE2_JIT_COMPLETE);
-
     if (!code_)
     {
         PCRE2_UCHAR8 errbuffer[256];
@@ -140,6 +139,27 @@ void CompilePattern::compile()
         throw std::runtime_error(
             std::string("invalid regex pattern at offest ") +
             std::to_string(erroffset) + ": " + reinterpret_cast<char*>(errbuffer));
+    }
+
+    const int jit_rc = pcre2_jit_compile_8(code_, PCRE2_JIT_COMPLETE);
+    jit_ready_ = (jit_rc == 0);
+
+    static bool warned = false;
+    if (!warned)
+    {
+        int jit_config = 0;
+        const int cfg_rc = pcre2_config_8(PCRE2_CONFIG_JIT, &jit_config);
+        std::cerr << "[cppBpe] PCRE2 JIT config=" << jit_config
+                  << " config_rc=" << cfg_rc
+                  << " jit_compile_rc=" << jit_rc
+                  << (jit_ready_ ? " (enabled)" : " (disabled)")
+                  << "\n";
+
+        if (!jit_ready_)
+        {
+            std::cerr << "[cppBpe] PCRE2 JIT unavailable; falling back to pcre2_match_8.\n";
+        }
+        warned = true;
     }
 }
 
@@ -150,6 +170,7 @@ void CompilePattern::free_code() noexcept
         pcre2_code_free_8(code_);
         code_ = nullptr;
     }
+    jit_ready_ = false;
 }
 
 std::vector<std::string_view> CompilePattern::find_all(const std::string_view text) const
@@ -173,7 +194,19 @@ std::vector<std::string_view> CompilePattern::find_all(const std::string_view te
 
     while (offset <= length)
     {
-        const int rc = pcre2_jit_match_8(code_, subject, length, offset, 0, md, nullptr);
+        int rc = 0;
+        if (jit_ready_)
+        {
+            rc = pcre2_jit_match_8(code_, subject, length, offset, 0, md, nullptr);
+            if (rc == PCRE2_ERROR_JIT_BADOPTION || rc == PCRE2_ERROR_JIT_STACKLIMIT)
+            {
+                rc = pcre2_match_8(code_, subject, length, offset, 0, md, nullptr);
+            }
+        }
+        else
+        {
+            rc = pcre2_match_8(code_, subject, length, offset, 0, md, nullptr);
+        }
 
         if (rc == PCRE2_ERROR_NOMATCH)
         {

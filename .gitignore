@@ -7,7 +7,11 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/we 
 
 # IDE related files and folders
 .vscode/
 .idea/
+
+# UV related files
+uv.lock

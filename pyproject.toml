@@ -1,0 +1,11 @@
+[project]
+name = "cppBpe"
+version = "0.0.0"
+description = "C++ BPE tokenizer with Python bindings"
+requires-python = ">=3.11"
+dependencies = [
+  "pytest",
+  "tiktoken",
+  "regex",
+  "rustbpe",
+]

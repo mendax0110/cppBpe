@@ -76,6 +76,7 @@ namespace cppBpe
     private:
         std::string pattern_;
         pcre2_real_code_8* code_ = nullptr;
+        bool jit_ready_ = false;
 
         void compile();
         void free_code() noexcept;
