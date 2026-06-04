@@ -73,6 +73,9 @@ namespace cppBpe
         [[nodiscard]] std::vector<std::string_view> find_all(std::string_view text) const;
         [[nodiscard]] const std::string& pattern_str() const noexcept { return pattern_; }
 
+        template<typename Fn>
+        void for_each_match(std::string_view text, Fn&& callback) const;
+
     private:
         std::string pattern_;
         pcre2_real_code_8* code_ = nullptr;
@@ -96,7 +99,8 @@ namespace cppBpe
 
         std::vector<TokenId> encode(std::string_view text) const;
         std::vector<std::vector<TokenId>> batch_encode(const std::vector<std::string>& texts) const;
-        std::vector<TokenId> encode_chunk(const std::string_view chunk) const;
+        std::vector<TokenId> encode_chunk(std::string_view chunk) const;
+        void encode_chuck_into(std::string_view chunk, std::vector<TokenId>& out) const;
         std::string decode(const std::vector<TokenId>& ids) const;
 
         std::unordered_map<Pair, TokenId, PairHash> merges_;
@@ -116,6 +120,29 @@ namespace cppBpe
         const std::vector<std::vector<uint8_t>>& cached_vocab() const;
         void train_core_incremental(std::vector<Word> words, const std::vector<int32_t> &counts, uint32_t vocab_size);
         std::vector<std::vector<uint8_t>> build_vocab() const;
+
+        //mutable std::unordered_map<uint64_t, TokenId> encode_map_;
+        mutable std::vector<std::pair<uint64_t, TokenId>> encode_map_;
+        mutable bool encode_map_dirty_ = true;
+
+        //const std::unordered_map<uint64_t, TokenId>& cached_encode_map() const;
+        const std::vector<std::pair<uint64_t, TokenId>>& cached_encode_map() const;
+
+        [[nodiscard]] TokenId find_merge(const uint64_t key) const
+        {
+            const auto& map = cached_encode_map();
+            const auto it = std::lower_bound(map.begin(), map.end(), key, [](const auto& entry, uint64_t k)
+            {
+               return entry.first < k;
+            });
+            if (it != map.end() && it->first == key)
+            {
+                return it->second;
+            }
+            return UINT32_MAX;
+        }
+
+        std::vector<TokenId> encode_sequential(std::string_view text) const;
     };
 
     template<typename InputIt>
