@@ -50,6 +50,7 @@ FetchContent_Declare(
 )
 set(ABSL_USE_STATIC_LIBS ON)
 set(ABSL_USE_SHARED_LIBS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 FetchContent_MakeAvailable(abseil-cpp)
 
 # Other dependencies
