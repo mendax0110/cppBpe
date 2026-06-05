@@ -9,6 +9,7 @@
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for.h>
 #include "absl/container/flat_hash_map.h"
+#include <queue>
 
 struct pcre2_real_code_8;
 struct pcre2_real_match_data_8;
