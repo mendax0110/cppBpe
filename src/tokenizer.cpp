@@ -170,6 +170,15 @@ void CompilePattern::free_code() noexcept
         pcre2_code_free_8(code_);
         code_ = nullptr;
     }
+
+    for (auto* md : tls_match_data_)
+    {
+        if (md)
+        {
+            pcre2_match_data_free_8(md);
+        }
+    }
+
     jit_ready_ = false;
 }
 
@@ -237,12 +246,18 @@ std::vector<std::string_view> CompilePattern::find_all(const std::string_view te
 }
 
 template<typename Fn>
-void CompilePattern::for_each_match(const std::string_view text, Fn&& callback) const
+void CompilePattern::for_each_match(std::string_view text, Fn&& callback) const
 {
-    if (!code_ || text.empty()) return;
+    if (!code_ || text.empty())
+    {
+        return;
+    }
 
-    pcre2_match_data_8* md = pcre2_match_data_create_from_pattern_8(code_, nullptr);
-    if (!md) throw std::runtime_error("failed to create pcre2 match data");
+    pcre2_match_data_8* md = tls_match_data_.local();
+    if (!md)
+    {
+        md = pcre2_match_data_create_from_pattern_8(code_, nullptr);
+    }
 
     const auto subject = reinterpret_cast<PCRE2_SPTR8>(text.data());
     const PCRE2_SIZE length = text.size();
@@ -250,29 +265,43 @@ void CompilePattern::for_each_match(const std::string_view text, Fn&& callback) 
 
     while (offset <= length)
     {
-        int rc = jit_ready_
-            ? pcre2_jit_match_8(code_, subject, length, offset, 0, md, nullptr)
-            : pcre2_match_8(code_, subject, length, offset, 0, md, nullptr);
-
-        if (rc == PCRE2_ERROR_JIT_BADOPTION || rc == PCRE2_ERROR_JIT_STACKLIMIT)
+        int rc = 0;
+        if (jit_ready_)
+        {
+            rc = pcre2_jit_match_8(code_, subject, length, offset, 0, md, nullptr);
+            if (rc == PCRE2_ERROR_JIT_BADOPTION || rc == PCRE2_ERROR_JIT_STACKLIMIT)
+            {
+                rc = pcre2_match_8(code_, subject, length, offset, 0, md, nullptr);
+            }
+        }
+        else
         {
             rc = pcre2_match_8(code_, subject, length, offset, 0, md, nullptr);
         }
 
-        if (rc == PCRE2_ERROR_NOMATCH || rc < 0) break;
+        if (rc == PCRE2_ERROR_NOMATCH)
+        {
+            break;
+        }
+
+        if (rc < 0)
+        {
+            break;
+        }
 
         const PCRE2_SIZE* ov = pcre2_get_ovector_pointer_8(md);
-        if (ov[1] == ov[0])
+        const PCRE2_SIZE start = ov[0];
+        const PCRE2_SIZE end = ov[1];
+
+        if (end == start)
         {
             ++offset;
             continue;
         }
 
-        callback(text.substr(ov[0], ov[1] - ov[0]));
-        offset = ov[1];
+        callback(text.substr(start, end - start));
+        offset = end;
     }
-
-    pcre2_match_data_free_8(md);
 }
 
 void cppBpe::count_pairs_parallel(const std::vector<Word>& words, const std::vector<int32_t>& counts, PairCounts& out_pair_counts, WhereToUpdate& out_where)
@@ -515,14 +544,14 @@ std::vector<std::pair<std::vector<uint8_t>, uint32_t> > Tokenizer::get_mergeable
 
     for (uint32_t i = 0; i < 256; ++i)
     {
-        ranks.push_back({vocab[i], i});
+        ranks.emplace_back(vocab[i], i);
     }
 
     std::vector<std::pair<Pair, TokenId>> sorted;
     sorted.reserve(merges_.size());
     for (auto& [p, id] : merges_)
     {
-        sorted.push_back({p, id});
+        sorted.emplace_back(p, id);
     }
 
     std::ranges::sort(sorted, [](const auto& a, const auto& b)
@@ -532,7 +561,7 @@ std::vector<std::pair<std::vector<uint8_t>, uint32_t> > Tokenizer::get_mergeable
 
     for (auto &id: sorted | std::views::values)
     {
-        ranks.push_back({vocab[id], id});
+        ranks.emplace_back(vocab[id], id);
     }
 
     return ranks;
@@ -540,7 +569,141 @@ std::vector<std::pair<std::vector<uint8_t>, uint32_t> > Tokenizer::get_mergeable
 
 std::vector<TokenId> Tokenizer::encode(const std::string_view text) const
 {
-    return encode_sequential(text);
+    std::vector<TokenId> all_ids;
+    all_ids.reserve(text.size() / 6);
+    pattern_.for_each_match(text, [&](std::string_view chunk)
+    {
+        encode_chuck_into(chunk, all_ids);
+    });
+    return all_ids;
+}
+
+void Tokenizer::encode_chuck_into(std::string_view chunk, std::vector<TokenId>& out) const
+{
+    const size_t base = out.size();
+    out.reserve(base + chunk.size());
+    for (const unsigned char c : chunk)
+    {
+        out.push_back(c);
+    }
+
+    const size_t n = out.size() - base;
+    if (n < 2) return;
+
+    const auto& emap = cached_encode_map();
+    auto ids = std::span<TokenId>(out).subspan(base);
+    if (n < 128)
+    {
+        while (ids.size() >= 2)
+        {
+            TokenId best_id = UINT32_MAX;
+            size_t best_pos = 0;
+            bool found = false;
+
+            for (size_t i = 0; i + 1 < ids.size(); ++i)
+            {
+                const uint64_t key = (static_cast<uint64_t>(ids[i]) << 32) | ids[i + 1];
+                if (auto it = emap.find(key); it != emap.end())
+                {
+                    if (it->second < best_id)
+                    {
+                        best_id = it->second;
+                        best_pos = i;
+                        found = true;
+                    }
+                }
+            }
+            if (!found)
+            {
+                break;
+            }
+
+            ids[best_pos] = best_id;
+            out.erase(out.begin() + base + best_pos + 1);
+            ids = std::span<TokenId>(out).subspan(base);
+        }
+        return;
+    }
+
+    const size_t n_large = out.size() - base;
+    encode_scratch_.local().nxt.resize(n_large);
+    encode_scratch_.local().prv.resize(n_large);
+    std::iota(encode_scratch_.local().nxt.begin(), encode_scratch_.local().nxt.end(), 1);
+    encode_scratch_.local().prv[0] = n_large;
+
+    for (size_t i = 1; i < n_large; ++i)
+    {
+        encode_scratch_.local().prv[i] = i - 1;
+    }
+
+    encode_scratch_.local().alive.assign(n_large, true);
+    auto& heap = encode_scratch_.local().heap;
+    while (!heap.empty()) heap.pop();
+
+    for (size_t i = 0; i + 1 < n_large; ++i)
+    {
+        const uint64_t key = (static_cast<uint64_t>(out[i]) << 32) | out[i + 1];
+        if (auto it = emap.find(key); it != emap.end())
+        {
+            heap.emplace(it->second, i);
+        }
+    }
+
+    while (!heap.empty())
+    {
+        auto [rank, pos] = heap.top(); heap.pop();
+        if (!encode_scratch_.local().alive[pos])
+        {
+            continue;
+        }
+        const size_t r = encode_scratch_.local().nxt[pos];
+        if (r == n_large || !encode_scratch_.local().alive[r])
+        {
+            continue;
+        }
+        const uint64_t key = (static_cast<uint64_t>(out[base+pos]) << 32) | out[base+r];
+        auto it = emap.find(key);
+        if (it == emap.end() || it->second != rank)
+        {
+            continue;
+        }
+
+        out[base+pos] = rank;
+        encode_scratch_.local().alive[r] = false;
+        encode_scratch_.local().nxt[pos] = encode_scratch_.local().nxt[r];
+        if (encode_scratch_.local().nxt[r] < n_large)
+        {
+            encode_scratch_.local().prv[encode_scratch_.local().nxt[r]] = pos;
+        }
+
+        if (encode_scratch_.local().nxt[pos] < n_large && encode_scratch_.local().alive[encode_scratch_.local().nxt[pos]])
+        {
+            const uint64_t key = (static_cast<uint64_t>(out[base+pos]) << 32) | out[base+encode_scratch_.local().nxt[pos]];
+            if (auto it = emap.find(key); it != emap.end())
+            {
+                heap.emplace(it->second, pos);
+            }
+        }
+
+        if (encode_scratch_.local().prv[pos] < n_large && encode_scratch_.local().alive[encode_scratch_.local().prv[pos]])
+        {
+            const uint64_t key = (static_cast<uint64_t>(out[base+encode_scratch_.local().prv[pos]]) << 32) | out[base+pos];
+            if (auto it = emap.find(key); it != emap.end())
+            {
+                heap.emplace(it->second, encode_scratch_.local().prv[pos]);
+            }
+        }
+    }
+
+    size_t write_pos = base;
+    for (size_t i = 0; i < n_large; ++i)
+    {
+        if (encode_scratch_.local().alive[i])
+        {
+            out[write_pos++] = out[base+i];
+        }
+    }
+    out.resize(write_pos);
 }
 
 const std::vector<std::vector<uint8_t>>& Tokenizer::cached_vocab() const
@@ -553,219 +716,58 @@ const std::vector<std::vector<uint8_t>>& Tokenizer::cached_vocab() const
     return vocab_cache_;
 }
 
-const std::vector<std::pair<uint64_t, TokenId>>& Tokenizer::cached_encode_map() const
-{
-    if (encode_map_dirty_)
-    {
-        encode_map_.clear();
-        encode_map_.reserve(merges_.size() * 2);
-        for (const auto& [p, id] : merges_)
-        {
-            const uint64_t key = (static_cast<uint64_t>(p.first) << 32) | p.second;
-            encode_map_.emplace_back(key, id);
-        }
-        std::ranges::sort(encode_map_, {}, &std::pair<uint64_t, TokenId>::first);
-        encode_map_dirty_ = false;
-    }
-    return encode_map_;
-}
-
-void Tokenizer::encode_chuck_into(const std::string_view chunk, std::vector<TokenId>& out) const
-{
-    const size_t n = chunk.size();
-    if (n == 0) return;
-
-    if (n <= 32)
-    {
-        TokenId buf[32];
-        size_t len = n;
-        for (size_t i = 0; i < n; ++i)
-        {
-            buf[i] = static_cast<unsigned char>(chunk[i]);
-        }
-
-        while (len >= 2)
-        {
-            TokenId best_id = UINT32_MAX;
-            size_t best_pos = 0;
-            for (size_t i = 0; i + 1 < len; ++i)
-            {
-                const uint64_t key = (static_cast<uint64_t>(buf[i]) << 32) | buf[i + 1];
-                const auto it = find_merge(key);
-                if (it != UINT32_MAX && it < best_id)
-                {
-                    best_id = it;
-                    best_pos = i;
-                }
-            }
-            if (best_id == UINT32_MAX) break;
-            buf[best_pos] = best_id;
-            for (size_t i = best_pos + 1; i < len - 1; ++i)
-            {
-                buf[i] = buf[i + 1];
-            }
-            --len;
-        }
-
-        for (size_t i = 0; i < len; ++i)
-        {
-            out.push_back(buf[i]);
-        }
-        return;
-    }
-
-    std::vector<TokenId> ids;
-    ids.reserve(n);
-    for (const unsigned char c : chunk)
-    {
-        ids.push_back(c);
-    }
-
-    thread_local std::vector<size_t> nxt;
-    thread_local std::vector<size_t> prv;
-    thread_local std::vector<char> alive;
-
-    nxt.resize(n);
-    prv.resize(n);
-    alive.assign(n, 1);
-
-    std::iota(nxt.begin(), nxt.end(), 1);
-    prv[0] = n;
-    for (size_t i = 1; i < n; ++i)
-    {
-        prv[i] = i - 1;
-    }
-
-    using Entry = std::pair<TokenId, size_t>;
-    thread_local std::vector<Entry> heap;
-    heap.clear();
-
-    for (size_t i = 0; i + 1 < n; ++i)
-    {
-        const uint64_t key = (static_cast<uint64_t>(ids[i]) << 32) | ids[i + 1];
-        //const auto it = encode_map.find(key);
-        const auto it = find_merge(key);
-        if (it != UINT32_MAX)
-        {
-            heap.push_back({it, i});
-            std::ranges::push_heap(heap, std::greater<Entry>{});
-        }
-    }
-
-    while (!heap.empty())
-    {
-        std::ranges::pop_heap(heap.begin(), heap.end(), std::greater<Entry>{});
-        auto [rank, pos] = heap.back();
-        heap.pop_back();
-
-        if (!alive[pos]) continue;
-
-        const size_t r = nxt[pos];
-        if (r == n || !alive[r]) continue;
-        {
-            const uint64_t key = (static_cast<uint64_t>(ids[pos]) << 32) | ids[r];
-            const auto it = find_merge(key);
-            if (it == UINT32_MAX || it != rank) continue;
-        }
-
-        ids[pos] = rank;
-        alive[r] = false;
-        nxt[pos] = nxt[r];
-        if (nxt[r] < n) prv[nxt[r]] = pos;
-
-        if (nxt[pos] < n && alive[nxt[pos]])
-        {
-            const uint64_t key = (static_cast<uint64_t>(ids[pos]) << 32) | ids[nxt[pos]];
-            const auto it = find_merge(key);
-            if (it != UINT32_MAX)
-            {
-                heap.push_back({it, pos});
-                std::ranges::push_heap(heap, std::greater<Entry>{});
-            }
-        }
-
-        if (prv[pos] < n && alive[prv[pos]])
-        {
-            const uint64_t key = (static_cast<uint64_t>(ids[prv[pos]]) << 32) | ids[pos];
-            const auto it = find_merge(key);
-            if (it != UINT32_MAX)
-            {
-                heap.push_back({it, prv[pos]});
-                std::ranges::push_heap(heap, std::greater<Entry>{});
-            }
-        }
-    }
-
-    out.reserve(n);
-    for (size_t i = 0; i < n; ++i)
-    {
-        if (alive[i]) out.push_back(ids[i]);
-    }
-}
-
 std::vector<TokenId> Tokenizer::encode_chunk(const std::string_view chunk) const
 {
-    const size_t n = chunk.size();
-    if (n == 0) return {};
-
-    if (n <= 32)
-    {
-        TokenId buf[32];
-        size_t len = n;
-        for (size_t i = 0; i < n; ++i)
-        {
-            buf[i] = static_cast<unsigned char>(chunk[i]);
-        }
-
-        if (len < 2)
-        {
-            return std::vector<TokenId>(buf, buf + len);
-        }
-
-        while (len >= 2)
-        {
-            TokenId best_id = UINT32_MAX;
-            size_t best_pos = 0;
-
-            for (size_t i = 0; i + 1 < len; ++i)
-            {
-                const uint64_t key = (static_cast<uint64_t>(buf[i]) << 32) | buf[i + 1];
-                const auto it = find_merge(key);
-                if (it != UINT32_MAX && it < best_id)
-                {
-                    best_id = it;
-                    best_pos = i;
-                }
-            }
-
-            if (best_id == UINT32_MAX) break;
-
-            buf[best_pos] = best_id;
-            for (size_t i = best_pos + 1; i + 1 <= len - 1; ++i)
-            {
-                buf[i] = buf[i + 1];
-            }
-            --len;
-        }
-
-        return std::vector<TokenId>(buf, buf + len);
-    }
-
     std::vector<TokenId> ids;
-    ids.reserve(n);
+    ids.reserve(chunk.size());
     for (const unsigned char c : chunk)
     {
         ids.push_back(c);
     }
 
-    thread_local std::vector<size_t> nxt;
-    thread_local std::vector<size_t> prv;
-    thread_local std::vector<bool> alive;
+    const size_t n = ids.size();
+    if (n < 2)
+    {
+        return ids;
+    }
 
-    nxt.resize(n);
-    prv.resize(n);
-    alive.assign(n, true);
+    const auto& emap = cached_encode_map();
+    if (n < 128)
+    {
+        while (ids.size() >= 2)
+        {
+            TokenId best_id = UINT32_MAX;
+            size_t best_pos = 0;
+            bool found = false;
 
+            for (size_t i = 0; i + 1 < ids.size(); ++i)
+            {
+                //if (auto it = merges_.find({ids[i], ids[i + 1]}); it != merges_.end())
+                const uint64_t key = (static_cast<uint64_t>(ids[i]) << 32) | ids[i + 1];
+                if (auto it = emap.find(key); it != emap.end())
+                {
+                    if (it->second < best_id)
+                    {
+                        best_id = it->second;
+                        best_pos = i;
+                        found = true;
+                    }
+                }
+            }
+
+            if (!found)
+            {
+                break;
+            }
+
+            ids[best_pos] = best_id;
+            ids.erase(ids.begin() + best_pos + 1);
+        }
+
+        return ids;
+    }
+
+    std::vector<size_t> nxt(n), prv(n);
     std::iota(nxt.begin(), nxt.end(), 1);
     prv[0] = n;
     for (size_t i = 1; i < n; ++i)
@@ -773,62 +775,65 @@ std::vector<TokenId> Tokenizer::encode_chunk(const std::string_view chunk) const
         prv[i] = i - 1;
     }
 
+    std::vector<bool> alive(n,true);
+
     using Entry = std::pair<TokenId, size_t>;
-    thread_local std::vector<Entry> heap;
-    heap.clear();
+    std::priority_queue<Entry, std::vector<Entry>, std::greater<>> heap;
 
     for (size_t i = 0; i + 1 < n; ++i)
     {
         const uint64_t key = (static_cast<uint64_t>(ids[i]) << 32) | ids[i + 1];
-        const auto it = find_merge(key);
-        if (it != UINT32_MAX)
+        if (auto id = emap.find(key); id != emap.end())
         {
-            heap.push_back({it, i});
-            std::ranges::push_heap(heap, std::greater<Entry>{});
+            heap.emplace(id->second, i);
         }
     }
 
     while (!heap.empty())
     {
-        std::ranges::pop_heap(heap.begin(), heap.end(), std::greater<Entry>{});
-        auto [rank, pos] = heap.back();
-        heap.pop_back();
+        auto [rank, pos] = heap.top(); heap.pop();
 
-        if (!alive[pos]) continue;
+        if (!alive[pos])
+        {
+            continue;
+        }
 
         const size_t r = nxt[pos];
-        if (r == n || !alive[r]) continue;
-
+        if (r == n || !alive[r])
         {
-            const uint64_t key = (static_cast<uint64_t>(ids[pos]) << 32) | ids[r];
-            const auto it = find_merge(key);
-            if (it == UINT32_MAX || it != rank) continue;
+            continue;
+        }
+
+        const uint64_t key = (static_cast<uint64_t>(ids[pos]) << 32) | ids[r];
+        auto it = emap.find(key);
+        if (it == emap.end() || it->second != rank)
+        {
+            continue;
         }
 
         ids[pos] = rank;
         alive[r] = false;
         nxt[pos] = nxt[r];
-        if (nxt[r] < n) prv[nxt[r]] = pos;
+        if (nxt[r] < n)
+        {
+            prv[nxt[r]] = pos;
+        }
 
         if (nxt[pos] < n && alive[nxt[pos]])
         {
             const uint64_t key = (static_cast<uint64_t>(ids[pos]) << 32) | ids[nxt[pos]];
-            const auto it = find_merge(key);
-            if (it != UINT32_MAX)
+            if (auto id = emap.find(key); id != emap.end())
             {
-                heap.push_back({it, pos});
-                std::ranges::push_heap(heap, std::greater<Entry>{});
+                heap.emplace(id->second, pos);
             }
         }
 
         if (prv[pos] < n && alive[prv[pos]])
         {
             const uint64_t key = (static_cast<uint64_t>(ids[prv[pos]]) << 32) | ids[pos];
-            const auto it = find_merge(key);
-            if (it != UINT32_MAX)
+            if (auto id = emap.find(key); id != emap.end())
             {
-                heap.push_back({it, prv[pos]});
-                std::ranges::push_heap(heap, std::greater<Entry>{});
+                heap.emplace(id->second, prv[pos]);
             }
         }
     }
@@ -837,7 +842,10 @@ std::vector<TokenId> Tokenizer::encode_chunk(const std::string_view chunk) const
     out.reserve(n);
     for (size_t i = 0; i < n; ++i)
     {
-        if (alive[i]) out.push_back(ids[i]);
+        if (alive[i])
+        {
+            out.push_back(ids[i]);
+        }
     }
 
     return out;
@@ -860,6 +868,22 @@ std::vector<std::vector<TokenId> > Tokenizer::batch_encode(const std::vector<std
     return results;
 }
 
+const absl::flat_hash_map<uint64_t, TokenId>& Tokenizer::cached_encode_map() const
+{
+    if (encode_map_dirty_)
+    {
+        encode_map_.clear();
+        encode_map_.reserve(merges_.size());
+        for (const auto& [p, id] : merges_)
+        {
+            const uint64_t key = (static_cast<uint64_t>(p.first) << 32) | p.second;
+            encode_map_[key] = id;
+        }
+        encode_map_dirty_ = false;
+    }
+    return encode_map_;
+}
+
 std::string Tokenizer::decode(const std::vector<TokenId>& ids) const
 {
     const auto& vocab = cached_vocab();
@@ -878,7 +902,7 @@ std::string Tokenizer::decode(const std::vector<TokenId>& ids) const
 
     for (size_t i = 0; i < out.size();)
     {
-        unsigned char c = static_cast<unsigned char>(out[i]);
+        auto c = static_cast<unsigned char>(out[i]);
         int extra = 0;
         if (c < 0x80) { extra = 0; }
         else if ((c & 0xE0) == 0xC0) { extra = 1; }
@@ -901,15 +925,4 @@ std::string Tokenizer::decode(const std::vector<TokenId>& ids) const
     }
 
     return out;
-}
-
-std::vector<TokenId> Tokenizer::encode_sequential(const std::string_view text) const
-{
-    std::vector<TokenId> result;
-    result.reserve(text.size());
-    pattern_.for_each_match(text, [this, &result](const std::string_view& chunk)
-    {
-       encode_chuck_into(chunk, result);
-    });
-    return result;
 }

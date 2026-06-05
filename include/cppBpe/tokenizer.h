@@ -8,6 +8,7 @@
 #include <ranges>
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for.h>
+#include "absl/container/flat_hash_map.h"
 
 struct pcre2_real_code_8;
 struct pcre2_real_match_data_8;
@@ -54,8 +55,10 @@ namespace cppBpe
         }
     };
 
-    using PairCounts = std::unordered_map<Pair, int32_t, PairHash>;
-    using WhereToUpdate = std::unordered_map<Pair, std::vector<size_t>, PairHash>;
+    //using PairCounts = std::unordered_map<Pair, int32_t, PairHash>;
+    using PairCounts = absl::flat_hash_map<Pair, int32_t, PairHash>;
+    //using WhereToUpdate = std::unordered_map<Pair, std::vector<size_t>, PairHash>;
+    using WhereToUpdate = absl::flat_hash_map<Pair, std::vector<size_t>, PairHash>;
 
     void count_pairs_parallel(const std::vector<Word>& words, const std::vector<int32_t>& counts, PairCounts& out_pair_counts, WhereToUpdate& out_where);
 
@@ -83,6 +86,8 @@ namespace cppBpe
 
         void compile();
         void free_code() noexcept;
+
+        mutable tbb::enumerable_thread_specific<pcre2_real_match_data_8*> tls_match_data_;
     };
 
     constexpr std::string_view GPT4_PATTERN = R"('(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+)";
@@ -103,7 +108,8 @@ namespace cppBpe
         void encode_chuck_into(std::string_view chunk, std::vector<TokenId>& out) const;
         std::string decode(const std::vector<TokenId>& ids) const;
 
-        std::unordered_map<Pair, TokenId, PairHash> merges_;
+        //std::unordered_map<Pair, TokenId, PairHash> merges_;
+        absl::flat_hash_map<Pair, TokenId, PairHash> merges_;
         uint32_t vocab_size() const noexcept
         {
             return 256U + static_cast<uint32_t>(merges_.size());
@@ -122,27 +128,41 @@ namespace cppBpe
         std::vector<std::vector<uint8_t>> build_vocab() const;
 
         //mutable std::unordered_map<uint64_t, TokenId> encode_map_;
-        mutable std::vector<std::pair<uint64_t, TokenId>> encode_map_;
+        //mutable std::vector<std::pair<uint64_t, TokenId>> encode_map_;
+        mutable absl::flat_hash_map<uint64_t, TokenId> encode_map_;
         mutable bool encode_map_dirty_ = true;
 
         //const std::unordered_map<uint64_t, TokenId>& cached_encode_map() const;
-        const std::vector<std::pair<uint64_t, TokenId>>& cached_encode_map() const;
+        //const std::vector<std::pair<uint64_t, TokenId>>& cached_encode_map() const;
+        const absl::flat_hash_map<uint64_t, TokenId>& cached_encode_map() const;
 
         [[nodiscard]] TokenId find_merge(const uint64_t key) const
         {
-            const auto& map = cached_encode_map();
-            const auto it = std::lower_bound(map.begin(), map.end(), key, [](const auto& entry, uint64_t k)
+            const auto& map = cached_encode_map().find(key);
+            /*const auto it = std::lower_bound(map.begin(), map.end(), key, [](const auto& entry, uint64_t k)
             {
                return entry.first < k;
             });
             if (it != map.end() && it->first == key)
             {
                 return it->second;
+            }*/
+            if (map != cached_encode_map().end())
+            {
+                return map->second;
             }
             return UINT32_MAX;
         }
 
         std::vector<TokenId> encode_sequential(std::string_view text) const;
+
+        struct EncodeScratch
+        {
+            std::vector<size_t> nxt, prv;
+            std::vector<bool> alive;
+            std::priority_queue<std::pair<TokenId, size_t>, std::vector<std::pair<TokenId, size_t>>, std::greater<>> heap;
+        };
+        mutable tbb::enumerable_thread_specific<EncodeScratch> encode_scratch_;
     };
 
     template<typename InputIt>
@@ -151,7 +171,8 @@ namespace cppBpe
         pattern_ = CompilePattern(pattern.value_or(std::string(GPT4_PATTERN)));
         const std::vector<std::string> lines(begin, end);
 
-        using LocalCounts = std::unordered_map<std::string, int32_t>;
+        //using LocalCounts = std::unordered_map<std::string, int32_t>;
+        using LocalCounts = absl::flat_hash_map<std::string, int32_t>;
         tbb::enumerable_thread_specific<LocalCounts> local_counts;
 
         tbb::parallel_for(

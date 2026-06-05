@@ -1,14 +1,18 @@
 #include "cppBpe/python_bindings.h"
 #include "cppBpe/tokenizer.h"
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+#include <nanobind/stl/pair.h>
+#include <nanobind/stl/optional.h>
+
 #include <stdexcept>
 #include <string>
 #include <vector>
 #include <optional>
 
 using namespace cppBpe;
-namespace py = pybind11;
+namespace nb = nanobind;
 
 namespace
 {
@@ -19,24 +23,23 @@ namespace
         {
         }
 
-        void train_from_iterator(const py::object& iterator, const uint32_t vocab_size, const size_t buffer_size = 8192, const std::optional<std::string>& pattern = std::nullopt)
+        void train_from_iterator(const nb::object& iterator, const uint32_t vocab_size, const size_t buffer_size = 8192, const std::optional<std::string>& pattern = std::nullopt)
         {
-            const py::object iter_obj = py::iter(iterator);
+            const nb::object iter_obj = nb::iter(iterator);
             std::vector<std::string> texts;
             texts.reserve(buffer_size);
 
-            for (py::handle item : iter_obj)
+            for (nb::handle item : iter_obj)
             {
-                texts.push_back(item.cast<std::string>());
+                texts.push_back(nb::cast<std::string>(item));
             }
 
-            py::gil_scoped_release release;
+            nb::gil_scoped_release release;
             tok_.train(texts, vocab_size, pattern);
         }
 
         std::vector<uint32_t> encode(const std::string& text) const
         {
-            py::gil_scoped_release release;
             return tok_.encode(text);
         }
 
@@ -44,18 +47,17 @@ namespace
         {
             try
             {
-                py::gil_scoped_release release;
+                nb::gil_scoped_release release;
                 return tok_.decode(ids);
             }
             catch (const std::exception& e)
             {
-                throw py::value_error(e.what());
+                throw nb::value_error(e.what());
             }
         }
 
         std::vector<std::vector<uint32_t>> batch_encode(const std::vector<std::string>& texts) const
         {
-            py::gil_scoped_release release;
             return tok_.batch_encode(texts);
         }
 
@@ -69,18 +71,18 @@ namespace
             return tok_.get_patterns();
         }
 
-        std::vector<std::pair<py::bytes, uint32_t>> get_mergeable_ranks() const
+        std::vector<std::pair<nb::bytes, uint32_t>> get_mergeable_ranks() const
         {
             const auto ranks = tok_.get_mergeable_ranks();
-            std::vector<std::pair<py::bytes, uint32_t>> py_ranks;
-            py_ranks.reserve(ranks.size());
+            std::vector<std::pair<nb::bytes, uint32_t>> nb_ranks;
+            nb_ranks.reserve(ranks.size());
 
             for (const auto& [bytes_vec, id] : ranks)
             {
-                py_ranks.emplace_back(py::bytes(reinterpret_cast<const char*>(bytes_vec.data()), bytes_vec.size()), id);
+                nb_ranks.emplace_back(nb::bytes(reinterpret_cast<const char*>(bytes_vec.data()), bytes_vec.size()), id);
             }
 
-            return py_ranks;
+            return nb_ranks;
         }
 
     private:
@@ -88,20 +90,20 @@ namespace
     };
 }
 
-void cppBpe::register_module(const py::module_& m)
+void cppBpe::register_module(nb::module_& m)
 {
     m.doc() = "Fast BPE tokenizer training — C++ port of karpathy/rustbpe";
 
-    py::class_<PyTokenizer>(m, "Tokenizer")
-        .def(py::init<>(),
+    nb::class_<PyTokenizer>(m, "Tokenizer")
+        .def(nb::init<>(),
              "Create a new Tokenizer (uses GPT-4 regex pattern by default).")
 
         .def("train_from_iterator",
              &PyTokenizer::train_from_iterator,
-             py::arg("iterator"),
-             py::arg("vocab_size"),
-             py::arg("buffer_size") = 8192,
-             py::arg("pattern")     = py::none(),
+             nb::arg("iterator"),
+             nb::arg("vocab_size"),
+             nb::arg("buffer_size") = 8192,
+             nb::arg("pattern")     = nb::none(),
              R"doc(
                     Train the tokenizer on an iterator of strings.
 
@@ -119,20 +121,22 @@ void cppBpe::register_module(const py::module_& m)
 
         .def("encode",
              &PyTokenizer::encode,
-             py::arg("text"),
+             nb::arg("text"),
+             nb::call_guard<nb::gil_scoped_release>(),
              "Encode a string into a list of token IDs.")
 
         .def("decode",
              &PyTokenizer::decode,
-             py::arg("ids"),
+             nb::arg("ids"),
              "Decode a list of token IDs back to a string.")
 
         .def("batch_encode",
              &PyTokenizer::batch_encode,
-             py::arg("texts"),
+             nb::arg("texts"),
+             nb::call_guard<nb::gil_scoped_release>(),
              "Encode a list of strings in parallel.  Returns a list of token-ID lists.")
 
-        .def_property_readonly("vocab_size",
+        .def_prop_ro("vocab_size",
              &PyTokenizer::vocab_size,
              "Vocabulary size: 256 (bytes) + number of learned merges.")
 
@@ -159,7 +163,7 @@ void cppBpe::register_module(const py::module_& m)
              )doc");
 }
 
-PYBIND11_MODULE(cppBpe, m)
+NB_MODULE(cppBpe, m)
 {
     cppBpe::register_module(m);
 }

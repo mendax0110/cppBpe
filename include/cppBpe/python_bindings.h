@@ -1,9 +1,8 @@
 #pragma once
 
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <nanobind/nanobind.h>
 
 namespace cppBpe
 {
-    void register_module(const pybind11::module_& m);
+    void register_module(nanobind::module_& m);
 }

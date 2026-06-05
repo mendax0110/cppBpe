@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "absl/container/flat_hash_map.h"
 
 using namespace cppBpe;
 
@@ -70,7 +71,7 @@ namespace
     } while (false)
 
 
-    Tokenizer make_tok_with_pattern(const std::string& pat, std::unordered_map<Pair, TokenId, PairHash> merges = {})
+    Tokenizer make_tok_with_pattern(const std::string& pat, absl::flat_hash_map<Pair, TokenId, PairHash> merges = {})
     {
         Tokenizer tok(pat);
         tok.merges_ = std::move(merges);
@@ -254,7 +255,8 @@ namespace
 
     void test_encode_chained_merges()
     {
-        std::unordered_map<Pair, TokenId, PairHash> m;
+        //std::unordered_map<Pair, TokenId, PairHash> m;
+        absl::flat_hash_map<Pair, TokenId, PairHash> m;
         m[{97,97}]  = 256; // 'aa' -> 256 (learned first)
         m[{256,97}] = 257; // 'aa'+'a' -> 257 (learned second)
         const auto tok = make_tok_with_pattern(R"(\w+)", m);
@@ -277,7 +279,8 @@ namespace
 
     void test_encode_decode_roundtrip_with_spaces()
     {
-        std::unordered_map<Pair, TokenId, PairHash> m;
+        //std::unordered_map<Pair, TokenId, PairHash> m;
+        absl::flat_hash_map<Pair, TokenId, PairHash> m;
         m[{104,101}] = 256; // 'he'
         m[{108,108}] = 257; // 'll'
         m[{256,257}] = 258; // 'hell'
@@ -319,7 +322,8 @@ namespace
 
     void test_get_mergeable_ranks_chained()
     {
-        std::unordered_map<Pair, TokenId, PairHash> m;
+        //std::unordered_map<Pair, TokenId, PairHash> m;
+        absl::flat_hash_map<Pair, TokenId, PairHash> m;
         m[{65,66}]  = 256; // "AB"
         m[{256,67}] = 257; // "ABC"
         const auto tok = make_tok_with_pattern("", m);
