@@ -79,7 +79,7 @@ namespace
 
             for (const auto& [bytes_vec, id] : ranks)
             {
-                nb_ranks.emplace_back(nb::bytes(reinterpret_cast<const char*>(bytes_vec.data()), bytes_vec.size()), id);
+                nb_ranks.emplace_back(nb::bytes(bytes_vec.data(), bytes_vec.size()), id);
             }
 
             return nb_ranks;
@@ -90,7 +90,7 @@ namespace
     };
 }
 
-void cppBpe::register_module(nb::module_& m)
+void cppBpe::register_module(const nb::module_& m)
 {
     m.doc() = "Fast BPE tokenizer training — C++ port of karpathy/rustbpe";
 

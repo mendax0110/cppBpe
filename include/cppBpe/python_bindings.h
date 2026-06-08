@@ -4,5 +4,5 @@
 
 namespace cppBpe
 {
-    void register_module(nanobind::module_& m);
+    void register_module(const nanobind::module_& m);
 }

@@ -82,7 +82,7 @@ CompilePattern::CompilePattern(const CompilePattern& other)
     compile();
 }
 
-CompilePattern &CompilePattern::operator=(const CompilePattern& other)
+CompilePattern& CompilePattern::operator=(const CompilePattern& other)
 {
     if (this != &other)
     {
@@ -100,7 +100,7 @@ CompilePattern::CompilePattern(CompilePattern&& other) noexcept
     other.code_ = nullptr;
 }
 
-CompilePattern &CompilePattern::operator=(CompilePattern&& other) noexcept
+CompilePattern& CompilePattern::operator=(CompilePattern&& other) noexcept
 {
     if (this != &other)
     {
@@ -246,7 +246,7 @@ std::vector<std::string_view> CompilePattern::find_all(const std::string_view te
 }
 
 template<typename Fn>
-void CompilePattern::for_each_match(std::string_view text, Fn&& callback) const
+void CompilePattern::for_each_match(const std::string_view text, Fn&& callback) const
 {
     if (!code_ || text.empty())
     {
@@ -499,7 +499,7 @@ void Tokenizer::train(const std::vector<std::string>& texts, const uint32_t voca
     train_from_iterator(texts.begin(), texts.end(), vocab_size, 8192, pattern);
 }
 
-std::vector<std::vector<uint8_t> > Tokenizer::build_vocab() const
+std::vector<std::vector<uint8_t>> Tokenizer::build_vocab() const
 {
     std::vector<std::vector<uint8_t>> vocab(256);
     for (uint32_t i = 0; i < 256; ++i)
@@ -535,7 +535,7 @@ std::vector<std::vector<uint8_t> > Tokenizer::build_vocab() const
     return vocab;
 }
 
-std::vector<std::pair<std::vector<uint8_t>, uint32_t> > Tokenizer::get_mergeable_ranks() const
+std::vector<std::pair<std::vector<uint8_t>, uint32_t>> Tokenizer::get_mergeable_ranks() const
 {
     const auto& vocab = cached_vocab();
 
@@ -578,7 +578,7 @@ std::vector<TokenId> Tokenizer::encode(const std::string_view text) const
     return all_ids;
 }
 
-void Tokenizer::encode_chuck_into(std::string_view chunk, std::vector<TokenId>& out) const
+void Tokenizer::encode_chuck_into(const std::string_view chunk, std::vector<TokenId>& out) const
 {
     const size_t base = out.size();
     out.reserve(base + chunk.size());
@@ -742,7 +742,6 @@ std::vector<TokenId> Tokenizer::encode_chunk(const std::string_view chunk) const
 
             for (size_t i = 0; i + 1 < ids.size(); ++i)
             {
-                //if (auto it = merges_.find({ids[i], ids[i + 1]}); it != merges_.end())
                 const uint64_t key = (static_cast<uint64_t>(ids[i]) << 32) | ids[i + 1];
                 if (auto it = emap.find(key); it != emap.end())
                 {
@@ -851,7 +850,7 @@ std::vector<TokenId> Tokenizer::encode_chunk(const std::string_view chunk) const
     return out;
 }
 
-std::vector<std::vector<TokenId> > Tokenizer::batch_encode(const std::vector<std::string>& texts) const
+std::vector<std::vector<TokenId>> Tokenizer::batch_encode(const std::vector<std::string>& texts) const
 {
     std::vector<std::vector<TokenId>> results(texts.size());
 
